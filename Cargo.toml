@@ -1,0 +1,7 @@
+[package]
+name = "replace-root"
+version = "0.1.0"
+authors = [ "Sam Henson <sam@ranger.is>" ]
+
+[dependencies]
+syscall = "*"
