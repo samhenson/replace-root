@@ -35,6 +35,13 @@ fn remount_root() {
     println!("mount() -> {}", ret);
 }
 
+fn umount(path : &str) {
+    let ret = unsafe {
+        syscall!(UMOUNT2, format!("{}\0", path).as_ptr(), 0)
+    };
+    println!("umount() -> {}", ret);
+}
+
 fn move_mount(from : &str, to : &str) {
     let ret = unsafe {
         syscall!(MOUNT, format!("{}\0", from).as_ptr(), format!("{}\0", to).as_ptr(), 0, MS_MOVE, 0)
@@ -78,6 +85,10 @@ fn main() {
 
     // remount the root device read-write
     remount_root();
+
+    // unmount filesystems that the initrd might have mounted
+    umount("proc");
+    umount("sys");
 
     // move the mounted devtmpfs out of the way
     fs::create_dir("old_dev").unwrap();
