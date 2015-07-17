@@ -88,6 +88,7 @@ fn main() {
 
     // unmount filesystems that the initrd might have mounted
     umount("proc");
+    umount("run");
     umount("sys");
 
     // move the mounted devtmpfs out of the way
