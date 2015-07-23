@@ -13,24 +13,29 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+#![feature(duration)]
 #![feature(path_ext)]
 #![feature(path_relative_from)]
 #![feature(start)]
+#![feature(thread_sleep)]
 #![feature(rt)]
 
 use std::fs;
 use std::fs::PathExt;
 use std::path::Path;
+use std::thread;
+use std::time::Duration;
 
 #[macro_use]
 extern crate syscall;
 
+const MS_RDONLY : u32 = 1;
 const MS_REMOUNT : u32 = 32;
 const MS_MOVE : u32 = 8192;
 
-fn remount_root() {
+fn remount_root(flags : u32) {
     let ret = unsafe {
-        syscall!(MOUNT, "\0".as_ptr(), "/\0".as_ptr(), "ext3\0".as_ptr(), MS_REMOUNT, "\0".as_ptr())
+        syscall!(MOUNT, "\0".as_ptr(), "/\0".as_ptr(), "ext3\0".as_ptr(), MS_REMOUNT | flags, "\0".as_ptr())
     };
     println!("mount() -> {}", ret);
 }
@@ -75,16 +80,33 @@ fn start(argc: isize, argv: *const *const u8) -> isize {
     return 0;
 }
 
+fn do_move(src : &str, dest : &str) {
+    match fs::rename(src, dest) {
+        Ok(_) => { },
+        Err(e) => {
+            println!("Error moving {} -> {}; {:?}", src, dest, e);
+            thread::sleep( Duration::new(3, 0) );
+        }
+    }
+}
+
 fn main() {
     // verify source directory
-    let src_dir = Path::new("new_root");
+    let src_dir = Path::new("/new_root");
     if src_dir.exists() == false || src_dir.is_dir() == false {
-        println!("Error: ./new_root does not exist or is not a directory");
+        println!("Error: /new_root does not exist or is not a directory");
         return;
     }
 
     // remount the root device read-write
-    remount_root();
+    remount_root(0);
+
+    // deleting files that are mapped into memory (this program and its libraries) will prevent
+    // the filesystem from being cleanly unmounted (or remounted read-only).  to avoid this, we
+    // preserve these files across the reboot and allow them to be cleaned from /tmp later.
+    do_move("/sbin/init",                       "/new_root/tmp/init");
+    do_move("/lib",                             "/new_root/tmp/lib");
+    do_move("/usr/lib/gcc/x86_64-pc-linux-gnu", "/new_root/tmp/lib_gcc");
 
     // unmount filesystems that the initrd might have mounted
     umount("proc");
@@ -95,12 +117,12 @@ fn main() {
     fs::create_dir("old_dev").unwrap();
     move_mount("dev", "old_dev");
 
-    // delete everything except the new_root and dev directories
-    for entry in fs::read_dir(".").unwrap() {
+    // delete everything except the new_root, dev, and lost+found directories
+    for entry in fs::read_dir("/").unwrap() {
         let entry = entry.unwrap();
         let e_path = entry.path();
 
-        if e_path.ends_with("new_root") == false && e_path.ends_with("old_dev") == false {
+        if ! (e_path.ends_with("new_root") || e_path.ends_with("old_dev") || e_path.ends_with("lost+found") ) {
             if e_path.is_dir() {
                 println!("deleting dir  {}", &e_path.display());
                 fs::remove_dir_all(&e_path).unwrap();
@@ -132,8 +154,12 @@ fn main() {
     move_mount("old_dev", "dev");
     fs::remove_dir("old_dev").unwrap();
 
+    println!("remounting root read-only");
+    remount_root(MS_RDONLY);
+
     println!("calling sync() and reboot()");
     sync();
+    thread::sleep( Duration::new(3, 0) );
     reboot();
 }
 
